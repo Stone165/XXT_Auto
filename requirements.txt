@@ -1,0 +1,10 @@
+# 核心 GUI 框架与全功能浏览器内核
+PySide6==6.8.2
+
+# 打包工具
+pyinstaller>=6.4.0
+
+# 网络请求
+requests>=2.31.0
+
+openai>=1.12.0
