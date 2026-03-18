@@ -15,10 +15,8 @@ dist/
 # 配置文件
 config.json
 .env
+web_profile/
 
 # 个人 IDE 配置
 .vscode/
 .idea/
-
-# ico
-favicon.ico

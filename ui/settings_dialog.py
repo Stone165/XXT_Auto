@@ -38,7 +38,6 @@ class SettingsDialog(QDialog):
         # 底部按钮
         btn_layout = QHBoxLayout()
         self.btn_save = QPushButton("保存配置")
-        self.btn_save.setStyleSheet("background-color: #4CAF50; color: white; padding: 5px;")
         self.btn_cancel = QPushButton("取消")
         
         btn_layout.addWidget(self.btn_cancel)

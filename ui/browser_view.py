@@ -33,13 +33,14 @@ class CustomWebPage(QWebEnginePage):
             return
 
 class AutoFitWebView(QWebEngineView):
-    def __init__(self, base_width=1280, new_tab_callback=None, log_callback=None):
+    def __init__(self, base_width=1280, new_tab_callback=None, log_callback=None, profile=None):
         super().__init__()
         self.base_width = base_width
         self.new_tab_callback = new_tab_callback
         self.log_callback = log_callback 
         
-        profile = QWebEngineProfile.defaultProfile()
+        if profile is None:
+            profile = QWebEngineProfile.defaultProfile()
 
         user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         profile.setHttpUserAgent(user_agent)

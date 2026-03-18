@@ -3,16 +3,19 @@ import json
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QTextEdit, QLabel, QTabWidget)
 from PySide6.QtCore import QUrl, QTimer, Slot
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCursor,QIcon
+
 
 from core.answer_worker import AnswerWorker
 from ui.browser_view import AutoFitWebView
 from ui.settings_dialog import SettingsDialog
 
 class MyToolApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, web_profile=None):
         super().__init__()
+        self.web_profile = web_profile
         self.setWindowTitle("智能全自动答题控制台")
+        self.setWindowIcon(QIcon("z_icon.png"))
         self.resize(1200, 800)
 
         central_widget = QWidget()
@@ -91,7 +94,7 @@ class MyToolApp(QMainWindow):
         self.add_new_tab(url="https://i.chaoxing.com/base", label="主页")
 
     def start_scraping_and_answering(self):
-        self.console_output.append("\n>>> 🚀 开始注入深层答题雷达...")
+        self.console_output.append("\n>>> -> 开始注入深层答题雷达...")
         
         extract_js = r"""
         (function() {
@@ -169,7 +172,7 @@ class MyToolApp(QMainWindow):
 
         except Exception as e:
             import traceback
-            print("🔥 toggle_answering 崩了：")
+            print("-> toggle_answering 崩了：")
             traceback.print_exc()
 
     def reset_button_state(self):
@@ -295,6 +298,7 @@ class MyToolApp(QMainWindow):
     def add_new_tab(self, url=None, label="新标签页"):
         """创建一个新标签页并加入 QTabWidget"""
         browser = AutoFitWebView(
+            profile=self.web_profile,
             base_width=1280, 
             new_tab_callback=self.create_tab_from_link,
             log_callback=self.handle_sys_log
@@ -332,16 +336,9 @@ class MyToolApp(QMainWindow):
         (function() {
             if(window.__watchInterval) clearInterval(window.__watchInterval);
 
-            // 【最土但也最防弹的日志函数】：绝不丢失作用域，绝不被屏蔽！
-            function sysLog(msg) {
-                try {
-                    console.warn(msg);
-                } catch(e) {
-                    try { console.log(msg); } catch(err) {}
-                }
-            }
+            const sysLog = window.console.warn.bind(window.console) || window.console.log.bind(window.console);
 
-            sysLog("[SYS_PROGRESS] -> 开始运行，进度每4秒汇报一次！");
+            sysLog("[SYS_PROGRESS] -> 看片，冲刺！");
 
             let noTaskCount = 0;
 
@@ -368,41 +365,65 @@ class MyToolApp(QMainWindow):
 
                     if (foundVideos.length > 0) {
                         noTaskCount = 0; 
-                        let target = foundVideos[foundVideos.length - 1];
-                        let v = target.video;
-                        let win = target.win;
-
-                        if (!v.muted) v.muted = true;
-                        if (v.playbackRate !== 1.0) v.playbackRate = 1.0;
                         
-                        if (v.paused && !v.ended) {
-                            v.play().catch(e => {
-                                try { win.document.querySelector('.vjs-big-play-button').click(); } catch(err) {}
-                            });
-                        }
+                        let targetObj = null;
+                        let allFinished = true;
+                        let currentIndex = 1;
 
-                        let current = Math.floor(v.currentTime) || 0;
-                        let total = Math.floor(v.duration) || 0;
-
-                        if (total > 0) {
-                            let percent = Math.floor((current / total) * 100);
+                        for (let i = 0; i < foundVideos.length; i++) {
+                            let v = foundVideos[i].video;
+                            let win = foundVideos[i].win;
                             
-                            // 进度条打印在这里！
-                            sysLog(`[SYS_PROGRESS] -> 播放进度: ${current}s / ${total}s (${percent}%)`);
-
-                            let isFinished = false;
+                            let isFinished = v.__xxt_finished;
                             try { if (win.document.querySelector('.ans-job-finished')) isFinished = true; } catch(e){}
 
-                            if (!v.__xxt_finished && (percent >= 99 || v.ended || (total - current <= 1) || isFinished)) {
-                                v.__xxt_finished = true;
-                                sysLog("[SYS_PROGRESS] -> 视频真实播放完毕，任务点安全入账！");
+                            if (!isFinished) {
+                                targetObj = foundVideos[i]; 
+                                allFinished = false;
+                                currentIndex = i + 1;       
+                                break; 
+                            } else {
+                                v.__xxt_finished = true; 
+                            }
+                        }
+
+                        if (targetObj) {
+                            let v = targetObj.video;
+                            let win = targetObj.win;
+
+                            if (!v.muted) v.muted = true;
+                            if (v.playbackRate !== 1.0) v.playbackRate = 1.0;
+                            
+                            if (v.paused && !v.ended) {
+                                v.play().catch(e => {
+                                    try { win.document.querySelector('.vjs-big-play-button').click(); } catch(err) {}
+                                });
+                            }
+
+                            let current = Math.floor(v.currentTime) || 0;
+                            let total = Math.floor(v.duration) || 0;
+
+                            if (total > 0) {
+                                let percent = Math.floor((current / total) * 100);
+                                
+                                sysLog(`[SYS_PROGRESS] -> [第${currentIndex}/${foundVideos.length}个视频] 播放进度: ${current}s / ${total}s (${percent}%)`);
+
+                                if (!v.__xxt_finished && (percent >= 99 || v.ended || (total - current <= 1))) {
+                                    v.__xxt_finished = true;
+                                    sysLog(`[SYS_PROGRESS] -> 第 ${currentIndex} 个视频播放完毕！寻找下一个...`);
+                                }
+                            } else {
+                                sysLog(`[SYS_PROGRESS] -> [第${currentIndex}/${foundVideos.length}个视频] 正在缓冲真实视频流...`);
+                            }
+                        } else if (allFinished) {
+                            if (!window.__page_finished_handled) {
+                                window.__page_finished_handled = true;
+                                sysLog("[SYS_PROGRESS] -> 本页所有视频已全部播放完毕，任务点安全入账！");
                                 
                                 setTimeout(() => {
                                     if (nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
                                 }, 3000); 
                             }
-                        } else {
-                            sysLog("[SYS_PROGRESS] -> 正在缓冲真实视频流...");
                         }
                     } 
                     else if (foundPPT) {
@@ -431,7 +452,6 @@ class MyToolApp(QMainWindow):
                             sysLog("[SYS_PROGRESS] -> 未发现学习任务和跳转按钮，自动停止刷课。");
                             clearInterval(window.__watchInterval);
                         } else {
-                            // 发送雷达心跳
                             sysLog("[SYS_PROGRESS] -> 正在深度扫描页面任务点...");
                         }
                     }
@@ -499,7 +519,7 @@ class MyToolApp(QMainWindow):
             self.console_output.append("请先打开一个网页！\n")
             self.toggle_watching() # 自动停止
             return
-        self.console_output.append(">>>  探测网页...")
+        self.console_output.append(">>> Ciallo～(∠・ω＜ )⌒☆​")
         current_browser.page().runJavaScript(self.get_video_js())
     
     def set_button_style(self, button, color_hex, hover_hex, pressed_hex):
