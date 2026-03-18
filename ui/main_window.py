@@ -331,13 +331,21 @@ class MyToolApp(QMainWindow):
         return r"""
         (function() {
             if(window.__watchInterval) clearInterval(window.__watchInterval);
-            const sysLog = window.console.info.bind(window.console) || window.console.log.bind(window.console);
-            sysLog("[SYS_PROGRESS] -> 挂机脚本已成功注入，智能雷达启动！");
 
-            let scanCount = 0;
+            // 【最土但也最防弹的日志函数】：绝不丢失作用域，绝不被屏蔽！
+            function sysLog(msg) {
+                try {
+                    console.warn(msg);
+                } catch(e) {
+                    try { console.log(msg); } catch(err) {}
+                }
+            }
+
+            sysLog("[SYS_PROGRESS] -> 开始运行，进度每4秒汇报一次！");
+
+            let noTaskCount = 0;
 
             window.__watchInterval = setInterval(() => {
-                scanCount++;
                 try {
                     let foundVideos = [];
                     let foundPPT = null;
@@ -354,10 +362,12 @@ class MyToolApp(QMainWindow):
 
                     scanWindow(window);
 
-                    let topDoc = window.top.document;
-                    let nextBtn = topDoc.querySelector('.orientationright') || topDoc.querySelector('#nextBtn') || Array.from(topDoc.querySelectorAll('a, button, span')).find(el => el.innerText && el.innerText.trim() === '下一节');
+                    let nextBtn = document.querySelector('.orientationright') || 
+                                  document.querySelector('#nextBtn') || 
+                                  Array.from(document.querySelectorAll('a, button, span')).find(el => el.innerText && el.innerText.trim() === '下一节');
 
                     if (foundVideos.length > 0) {
+                        noTaskCount = 0; 
                         let target = foundVideos[foundVideos.length - 1];
                         let v = target.video;
                         let win = target.win;
@@ -376,6 +386,9 @@ class MyToolApp(QMainWindow):
 
                         if (total > 0) {
                             let percent = Math.floor((current / total) * 100);
+                            
+                            // 进度条打印在这里！
+                            sysLog(`[SYS_PROGRESS] -> 播放进度: ${current}s / ${total}s (${percent}%)`);
 
                             let isFinished = false;
                             try { if (win.document.querySelector('.ans-job-finished')) isFinished = true; } catch(e){}
@@ -385,15 +398,15 @@ class MyToolApp(QMainWindow):
                                 sysLog("[SYS_PROGRESS] -> 视频真实播放完毕，任务点安全入账！");
                                 
                                 setTimeout(() => {
-                                    let dialogBtns = Array.from(topDoc.querySelectorAll('a, button, span')).filter(el => el.innerText && el.innerText.includes('下一节') && el.offsetHeight > 0);
-                                    if (dialogBtns.length > 0) { dialogBtns[0].click(); return; }
                                     if (nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
                                 }, 3000); 
                             }
                         } else {
+                            sysLog("[SYS_PROGRESS] -> 正在缓冲真实视频流...");
                         }
                     } 
                     else if (foundPPT) {
+                        noTaskCount = 0; 
                         if (!window.__ppt_handled) {
                             window.__ppt_handled = true;
                             sysLog("[SYS_PROGRESS] -> 检测到 PPT，安全模拟认真阅读中 (等待 8 秒)...");
@@ -402,31 +415,30 @@ class MyToolApp(QMainWindow):
                                 if(nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
                             }, 8000);
                         }
-                    } else {
-                        // 【核心智能判定逻辑】
-                        if (nextBtn) {
-                            // 有“下一节”按钮，说明确实是课程页面，只是这节刚好没视频
+                    } 
+                    else {
+                        noTaskCount++;
+                        if (nextBtn && noTaskCount > 3) {
                             if (!window.__empty_handled) {
                                 window.__empty_handled = true;
-                                sysLog("[SYS_PROGRESS] -> 当前章节无视频或文档任务，3秒后自动跳过...");
+                                sysLog("[SYS_PROGRESS] -> 当前章节无视频或文档任务，自动跳过...");
                                 setTimeout(() => { 
                                     sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); 
                                     nextBtn.click(); 
-                                }, 3000);
+                                }, 2000);
                             }
+                        } else if (!nextBtn && noTaskCount > 5) {
+                            sysLog("[SYS_PROGRESS] -> 未发现学习任务和跳转按钮，自动停止刷课。");
+                            clearInterval(window.__watchInterval);
                         } else {
-                            // 连“下一节”都没有，绝对不是刷课界面
-                            if (scanCount > 6) { 
-                                // 给网页 6 秒的加载缓冲期，6 秒后宣判死刑
-                                sysLog("[SYS_PROGRESS] -> 当前界面不是学习页面，未发现任务和跳转按钮，自动停止刷课。");
-                                clearInterval(window.__watchInterval);
-                            } else {
+                            // 发送雷达心跳
+                            sysLog("[SYS_PROGRESS] -> 正在深度扫描页面任务点...");
                         }
                     }
                 } catch (err) {
-                    sysLog("[SYS_PROGRESS] -> JS内部致命错误: " + err.message);
+                    sysLog("[SYS_PROGRESS] -> JS底层错误: " + err.message);
                 }
-            }, 1000);
+            }, 4000); 
         })();
         """
     
@@ -449,34 +461,35 @@ class MyToolApp(QMainWindow):
                 current_browser.page().runJavaScript("if(window.__watchInterval) clearInterval(window.__watchInterval);")
 
     def handle_sys_log(self, msg):
-        """超级日志处理器：拦截进度，单行刷新，绝对容错"""
+        """基于 Emoji 识别的极简版日志接收器"""
         try:
-            from PySide6.QtGui import QTextCursor
             from PySide6.QtCore import QTimer
+            msg_str = str(msg).strip()
             
-            # 我们直接把带有 UPDATE_PROGRESS 的高频进度条彻底过滤掉，不让它显示
-            if "[SYS_PROGRESS]" not in msg:
-                return
-
-            # 只处理重要的动作通知
-            clean_msg = msg.replace("[SYS_PROGRESS]", "").strip()
-            self.console_output.append(clean_msg)
+            my_markers = ["->"]
+            
+            if any(marker in msg_str for marker in my_markers):
                 
-            if "自动停止刷课" in clean_msg:
-                self.reset_video_button_state()
+                clean_msg = msg_str.replace("[SYS_PROGRESS]", "").replace("[UPDATE_PROGRESS]", "").strip()
+                self.console_output.append(clean_msg)
+                
+                # 遇到走错房间的提示，自动弹回按钮
+                if "自动停止" in clean_msg:
+                    self.reset_video_button_state()
 
-            if "准备跳转至下一节" in clean_msg and getattr(self, 'is_watching', True):
-                self.console_output.append(">>> 正在等待新页面加载 (8秒后自动启动探测)...")
-                QTimer.singleShot(8000, self.execute_watch_script)
-                    
-            # 保持滚动条在最底端
-            cursor = self.console_output.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            self.console_output.setTextCursor(cursor)
-            
+                # 遇到连播提示，启动 8 秒倒计时复活
+                if "准备跳转至下一节" in clean_msg and getattr(self, 'is_watching', True):
+                    self.console_output.append(">>> 正在等待新页面加载 (8秒后自动启动探测)...\n")
+                    QTimer.singleShot(8000, self.execute_watch_script)
+
+                # 强行让滚动条自动滚到底部
+                self.console_output.verticalScrollBar().setValue(
+                    self.console_output.verticalScrollBar().maximum()
+                )
+
         except Exception as e:
-            print(f"[UI日志错误] {str(e)}") 
-
+            print(f"-> [UI接收器报错]: {e}")
+    
     def execute_watch_script(self):
         """实际执行注入的地方"""
         if not self.is_watching:
@@ -486,7 +499,7 @@ class MyToolApp(QMainWindow):
             self.console_output.append("请先打开一个网页！\n")
             self.toggle_watching() # 自动停止
             return
-        self.console_output.append(">>>  启动页面探测引擎...")
+        self.console_output.append(">>>  探测网页...")
         current_browser.page().runJavaScript(self.get_video_js())
     
     def set_button_style(self, button, color_hex, hover_hex, pressed_hex):
