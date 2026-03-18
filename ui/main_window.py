@@ -158,7 +158,25 @@ class MyToolApp(QMainWindow):
     @Slot()
     def toggle_answering(self):
         try:
-            if not self.is_running:
+            if not getattr(self, 'is_running', False):
+                api_key = ""
+                import json, os
+                if os.path.exists("config.json"):
+                    with open("config.json", "r", encoding="utf-8") as f:
+                        api_key = json.load(f).get("api_key", "")
+
+                if not api_key or str(api_key).strip() == "":
+                    self.console_output.append("\n>>>  拦截警告：检测到未配置大模型 API Key！")
+                    self.console_output.append(">>>  请先在弹出的设置窗口中填入信息，否则将默认全选 A。")
+                    
+                    self.open_settings() 
+                    
+                    if getattr(self, 'is_watching', False):
+                        self.console_output.append(">>> -> 无人值守保护触发：5秒后将强行跳过本页测验，继续刷课...")
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(5000, self.force_jump_next)
+                        
+                    return # 拦截成功，直接终止后续的答题注入逻辑！
                 self.is_running = True
                 self.btn_auto_answer.setText("⏹ 停止答题")
                 self.set_button_style(self.btn_auto_answer, "#FF0000", "#da3232", "#a72222")
@@ -183,7 +201,72 @@ class MyToolApp(QMainWindow):
         self.btn_auto_answer.setText("▶ 一键全自动答题")
         self.set_button_style(self.btn_auto_answer, "#4CAF50", "#45a049", "#3e8e41")
         self.btn_auto_answer.setEnabled(True)
+
+        if getattr(self, 'is_watching', False):
+            self.console_output.append("\n>>> -> AI 答题执行完毕！")
+            self.console_output.append(">>> -> 3秒后将强行跳过当前测验前往下一节...\n")
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(3000, self.force_jump_next)
     
+    def force_jump_next(self):
+        if not getattr(self, 'is_watching', False):
+            return
+            
+        jump_js = """
+            (function() {
+                let clickedSubmit = false;
+
+                function findAndClickSubmit(win) {
+                    if (clickedSubmit) return;
+                    try {
+                        let doc = win.document;
+                        if (doc) {
+                            let submitBtn = Array.from(doc.querySelectorAll('a, button, span, div.btn'))
+                                                 .find(b => b.innerText && b.innerText.trim() === '提交' && b.offsetHeight > 0);
+                            if (submitBtn) {
+                                submitBtn.click();
+                                clickedSubmit = true;
+                                
+                                setTimeout(() => {
+                                    function clickConfirm(w) {
+                                        try {
+                                            let confirmBtn = Array.from(w.document.querySelectorAll('.bluebtn, .ui-dialog-buttonpane button, .layui-layer-btn0, .jb_btn, a.sure'))
+                                                                  .find(b => b.innerText && (b.innerText.includes('确定') || b.innerText.includes('确认')));
+                                            if (confirmBtn && confirmBtn.offsetHeight > 0) confirmBtn.click();
+                                        } catch(e) {}
+                                        try { for (let i = 0; i < w.frames.length; i++) clickConfirm(w.frames[i]); } catch(e) {}
+                                    }
+                                    clickConfirm(window); // 绝对安全的作用域扫描
+                                }, 1000);
+                            }
+                        }
+                    } catch(e) {}
+                    try { for (let i = 0; i < win.frames.length; i++) findAndClickSubmit(win.frames[i]); } catch(e) {}
+                }
+
+                findAndClickSubmit(window);
+
+                setTimeout(() => {
+                    try {
+                        // 寻找弹窗和下一节按钮
+                        let dialogBtn = Array.from(document.querySelectorAll('.bluebtn, .ui-dialog-buttonpane button, .layui-layer-btn0, .jb_btn'))
+                                             .find(b => b.innerText && (b.innerText.includes('确定') || b.innerText.includes('下一节')));
+                        if (dialogBtn && dialogBtn.offsetHeight > 0) { dialogBtn.click(); return; }
+                        
+                        let nextBtn = document.querySelector('.orientationright') || document.querySelector('#nextBtn') || Array.from(document.querySelectorAll('a, button, span')).find(el => el.innerText && el.innerText.trim() === '下一节');
+                        if (nextBtn) { nextBtn.click(); }
+                    } catch(e) {}
+                }, 2500);
+            })();
+            """
+        current_browser = self.tabs.currentWidget()
+        if current_browser:
+            current_browser.page().runJavaScript(jump_js)
+            self.console_output.append("-> 正在尝试交卷并跳转新页面 (8秒后重启刷课雷达)...\n")
+            from PySide6.QtCore import QTimer
+            # Python 端独立计时器，8 秒后强制在下一个页面重启雷达
+            QTimer.singleShot(8000, self.execute_watch_script)
+
     def reset_video_button_state(self):
         """将刷课按钮恢复为初始的【开始】状态"""
         self.is_watching = False
@@ -348,14 +431,32 @@ class MyToolApp(QMainWindow):
                 try {
                     let foundVideos = [];
                     let foundPPT = null;
+                    let foundTest = false;
 
                     function scanWindow(win) {
+                        let doc;
+                        try { doc = win.document; } catch(e) {}
+                        if (!doc) return;
+
+                        // 1. 安全扫描视频
+                        try { doc.querySelectorAll('video').forEach(v => { foundVideos.push({ video: v, win: win }); }); } catch(e) {}
+                        
+                        // 2. 安全扫描 PPT
+                        try { if (doc.getElementById('panView') || doc.querySelector('.fileBox')) foundPPT = doc; } catch(e) {}
+                        
+                        // 3. 安全扫描测验
                         try {
-                            let doc = win.document;
-                            if (!doc) return;
-                            if (doc.getElementById('panView') || doc.querySelector('.fileBox')) foundPPT = doc;
-                            doc.querySelectorAll('video').forEach(v => { foundVideos.push({ video: v, win: win }); });
-                        } catch(e) {} 
+                            if (doc.querySelector('.TiMu, .Zy_Title, .singleQuesId, .questionLi, .subject_item') ||
+                                doc.querySelector('iframe[src*="work"]')) {
+                                foundTest = true;
+                            }
+                        } catch(e) {}
+                        try {
+                            if (win.location && win.location.href && win.location.href.includes('work')) {
+                                foundTest = true;
+                            }
+                        } catch(e) {}
+
                         try { for (let i = 0; i < win.frames.length; i++) scanWindow(win.frames[i]); } catch(e) {}
                     }
 
@@ -385,7 +486,10 @@ class MyToolApp(QMainWindow):
                                 currentIndex = i + 1;       
                                 break; 
                             } else {
-                                v.__xxt_finished = true; 
+                                if (!v.__xxt_finished) {
+                                    v.__xxt_finished = true;
+                                    sysLog(`[SYS_PROGRESS] -> 第 ${i+1} 个视频已有绿钩，跳过！`);
+                                }
                             }
                         }
 
@@ -422,9 +526,12 @@ class MyToolApp(QMainWindow):
                                 window.__page_finished_handled = true;
                                 sysLog("[SYS_PROGRESS] -> 本页所有视频已全部播放完毕，任务点安全入账！");
                                 
-                                setTimeout(() => {
-                                    if (nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
-                                }, 3000); 
+                                if (foundTest) {
+                                    sysLog("[SYS_PROGRESS] -> 发现【章节测验】，开始答题！");
+                                    clearInterval(window.__watchInterval);
+                                } else {
+                                    setTimeout(() => { if (nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); } }, 3000);
+                                }
                             }
                         }
                     } 
@@ -435,10 +542,24 @@ class MyToolApp(QMainWindow):
                             sysLog("[SYS_PROGRESS] -> 检测到 PPT，安全模拟认真阅读中 (等待 8 秒)...");
                             setTimeout(() => {
                                 sysLog("[SYS_PROGRESS] -> PPT 阅读完毕！");
-                                if(nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
+
+                                if (foundTest) {
+                                    sysLog("[SYS_PROGRESS] -> 发现【章节测验】，开始答题！");
+                                    clearInterval(window.__watchInterval);
+                                } else {
+                                    if(nextBtn) { sysLog("[SYS_PROGRESS] -> 准备跳转至下一节..."); nextBtn.click(); }
+                                }
                             }, 8000);
                         }
-                    } 
+                    }
+                    else if (foundTest) {
+                        noTaskCount = 0;
+                        if (!window.__test_handled) {
+                            window.__test_handled = true;
+                            sysLog("[SYS_PROGRESS] -> 发现纯【章节测验】页面，开始答题！");
+                            clearInterval(window.__watchInterval);
+                        }
+                    }
                     else {
                         noTaskCount++;
                         if (nextBtn && noTaskCount > 3) {
@@ -495,6 +616,11 @@ class MyToolApp(QMainWindow):
                 clean_msg = msg_str.replace("[SYS_PROGRESS]", "").replace("[UPDATE_PROGRESS]", "").strip()
                 self.console_output.append(clean_msg)
                 
+                if "开始答题" in clean_msg:
+                    if not self.is_running:
+                        self.console_output.append("\n>>> -> 正在将控制权移交给 AI 答题模块...")
+                        self.toggle_answering()
+
                 # 遇到走错房间的提示，自动弹回按钮
                 if "自动停止" in clean_msg:
                     self.reset_video_button_state()
