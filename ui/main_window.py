@@ -1,5 +1,6 @@
 # filepath: ui/main_window.py
 import json
+import os
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QTextEdit, QLabel, QTabWidget)
 from PySide6.QtCore import QUrl, QTimer, Slot
@@ -14,8 +15,9 @@ class MyToolApp(QMainWindow):
     def __init__(self, web_profile=None):
         super().__init__()
         self.web_profile = web_profile
-        self.setWindowTitle("智能全自动答题控制台")
-        self.setWindowIcon(QIcon("z_icon.png"))
+        self.setWindowTitle("学习通小助手")
+        icon_path = os.path.join(os.path.dirname(__file__), "z_icon.ico")
+        self.setWindowIcon(QIcon(icon_path))
         self.resize(1200, 800)
 
         central_widget = QWidget()
